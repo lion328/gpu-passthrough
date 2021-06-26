@@ -2,4 +2,4 @@
 
 cd edk2
 . edksetup.sh BaseTools
-build
+build -DSECURE_BOOT_ENABLE=TRUE
