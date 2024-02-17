@@ -237,7 +237,7 @@ main() {
     rom_method="$device_acpi_path._ROM"
 
     # Checking if the supplied _ROM is working.
-    if ! acpi_call "$rom_method" > /dev/null ; then
+    if ! acpi_call "$rom_method 0 0" > /dev/null ; then
         echo "error: Failed to execute _ROM method." >&2
         return 1
     fi
