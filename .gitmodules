@@ -1,4 +1,0 @@
-[submodule "edk2"]
-	path = edk2
-	url = https://github.com/lion328/edk2.git
-	branch = custom-patches
