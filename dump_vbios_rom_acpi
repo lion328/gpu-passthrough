@@ -1,0 +1,291 @@
+#!/bin/sh
+
+default_device="0000:01:00.0"
+
+verbose=0
+device="$default_device"
+device_acpi_path=""
+rom_method=""
+rom_length=-1
+
+# Each acpi_call can only contain 42 bytes of actual ACPI buffer data.
+max_bytes_per_call=$((42))
+
+# The ROM should be divided into 32-KiB sections.
+bytes_per_section=$((0x8000))
+
+help() {
+    echo "Usage: ./dump_vbios_rom_acpi [OPTION]..." >&2
+    echo "Dump video bios ROMs using ACPI."
+    exit 0
+}
+
+verbose_echo() {
+    if [ $verbose -gt 0 ]; then
+        echo "$@"
+    fi
+}
+
+verbose_printf() {
+    if [ $verbose -gt 0 ]; then
+        printf "$@"
+    fi
+}
+
+# Call ACPI stuff.
+acpi_call() {
+    echo "$@" > /proc/acpi/call
+    data=$(tr -d '\0' < /proc/acpi/call)
+
+    if echo "$data" | grep 'Error: '; then
+        error=$(echo "$data" | sed "s/Error: //")
+        echo "error: '$*' returned: $error" >&2
+        return 1
+    fi
+
+    echo "$data"
+}
+
+read_rom_raw() {
+    start=$(($1))
+    left=$(($2))
+    end=$((start + left))
+
+    while [ $start -lt $end ]; do
+        offset_in_section=$((start % bytes_per_section))
+        count=$max_bytes_per_call
+
+        # Limit access to a section at a time. If you try to read across a section boundary in a
+        # single call (e.g. reading 0x20 bytes at 0x7ff0,) it only will output the content of the
+        # section which the start of offset fall in. On my laptop, it padded the buffer with 0x0,
+        # so I still got a buffer with the same length I requested, but with incorrect data. I'm
+        # not sure there is a way to reliably detect that given that we only have access to _ROM
+        # method. The safest way probably by reading single byte per call, but that's very
+        # inefficient.
+        if [ $((offset_in_section + count)) -gt $bytes_per_section ]; then
+            count=$((bytes_per_section - offset_in_section))
+        fi
+
+        if [ $count -gt $left ]; then
+            count=$left
+        fi
+
+        if ! data=$(acpi_call "$rom_method" "$start" "$count"); then
+            return 1
+        fi
+
+        # Calculate how many bytes it actually read. Some _ROM method just returned a buffer
+        # within the section without padding. Since we limited each read to a section, this
+        # should not be a problem anymore. But, you know, just in case.
+        # An actual byte in the output of acpi_call, on average, occupied exactly 6 characters.
+        # (e.g. rotate 1 byte left so you get "0x??, " * (N-1) with the last byte being "0x??}{")
+        count=$((${#data} / 6))
+
+        echo "$data"
+
+        verbose_printf "Reading ROM at 0x%08x for 0x%02x bytes\n" $start $count >&2
+
+        start=$((start + count))
+        left=$((left - count))
+    done
+}
+
+# Read the selected part of ROM in hex form with a single byte per line.
+read_rom_hex_lines() {
+    # Extract data as a hex string. Since acpi_call outputs in "{0xde, 0xad, ...}" format, we can
+    # just remove '{', '}', ' ', and "0x" to get a clean hex string.
+    read_rom_raw "$@" | tr -d "{ }" | tr "," "\n" | (
+        # Get rid of the "0x" prefix.
+        while read -r hex; do
+            printf "%02x\n" "$hex"
+        done
+    )
+}
+
+# Read the selected part of ROM in hex form, all in a single line.
+read_rom_hex() {
+    read_rom_hex_lines "$@" | tr -d "\n"
+}
+
+# Read the selected part of ROM.
+read_rom() {
+    read_rom_hex_lines "$@" | (
+        while read -r hex; do
+            printf "%b" "\x$hex"
+        done
+    )
+}
+
+# Get hex digits by address and size in bytes it represented.
+hex_at() {
+    start=$((($1 * 2) + 1))
+    end=""
+
+    if [ "$2" != "" ]; then
+        end=$((($1 + $2) * 2))
+    fi
+
+    cut -c "$start-$end"
+}
+
+# Covert bytes in hex form into a little-endian integer.
+hex_to_int() {
+    bytes=$(cat)
+    reversed=""
+
+    count=0
+    while [ $count -lt "$1" ]; do
+        digit=$(echo "$bytes" | hex_at "$count" 1)
+        reversed="$digit$reversed"
+        count=$((count + 1))
+    done
+
+    echo $((0x$reversed))
+}
+
+# Find the length of the entire ROM from PCI headers.
+# We can also get it from RVBS object too, but since NVIDIA Windows driver only required _ROM
+# I considered it a less reliable way. This way is more versatile and compliant to ACPI spec,
+# and thus can be used for dumping ROM of other devices that utilized the same mechanism, not
+# limited to NVIDIA cards.
+find_rom_length() {
+    rom_length=0
+    rom_next=0
+
+    while true; do
+        # Reading the PCI ROM header.
+        rom_header=$(read_rom_hex 0 0x1a)
+        rom_magic=$(echo "$rom_header" | hex_to_int 2)
+        if [ "$rom_magic" != $((0xaa55)) ]; then
+            printf "error: Invalid PCI ROM header magic: 0x%04x != 0xaa55\n" "$rom_magic" >&2
+            return 1
+        fi
+
+        verbose_printf "Found a PCI ROM header at 0x%08x.\n" $rom_next >&2
+
+        # Reading the PCIR data structure
+        # Get PCIR offset at 0x18
+        pcir_offset=$(echo "$rom_header" | hex_at 0x18 | hex_to_int 2)
+        pcir=$(read_rom_hex "$pcir_offset" 0x18)
+        pcir_magic=$(echo "$pcir" | hex_at 0 4)
+        if [ "$pcir_magic" != "50434952" ]; then # "PCIR" in hex
+            echo "error: Invalid PCIR data structure magic: 0x$pcir_magic != \"PCIR\"" >&2
+            return 1
+        fi
+
+        verbose_printf "Found a PCIR data structure at 0x%08x.\n" "$pcir_offset" >&2
+
+        # Get the image length at PCIR+0x10.
+        image_length_512k=$(echo "$pcir" | hex_at 0x10 | hex_to_int 2)
+        image_length=$((image_length_512k * 512))
+
+        rom_length=$((rom_length + image_length))
+
+        # Checking if there is more images by checking the MSB of PCIR+0x15.
+        indicator=$(echo "$pcir" | hex_at 0x15 | hex_to_int 1)
+        if [ "$indicator" -lt 128 ]; then
+            verbose_echo "There is more ROM images. Continuing." >&2
+
+            # The start of the next image should be at the end of the current one.
+            rom_next=$rom_length
+        else
+            verbose_echo "No more ROM images left the process." >&2
+            break
+        fi
+    done
+
+    echo $rom_length
+}
+
+find_acpi_path() {
+    file="/sys/bus/pci/devices/$1"
+
+    if [ ! -d "$file" ]; then
+        echo "error: PCI device $1 not found." >&2
+        return 1
+    fi
+
+    file="$file/firmware_node/path"
+
+    if [ ! -f "$file" ]; then
+        echo "error: Failed to find the ACPI path of device $1." >&2
+        return 1
+    fi
+
+    cat "$file"
+}
+
+main() {
+    if [ ! -f /proc/acpi/call ]; then
+        echo "error: acpi_call module is not loaded." >&2
+        return 1
+    fi
+
+    if [ ! -r /proc/acpi/call ] || [ ! -w /proc/acpi/call ]; then
+        echo "error: Insufficient permission for acpi_call access." >&2
+        return 1
+    fi
+
+    echo "Trying to read ROM from device $device." >&2
+
+    if ! device_acpi_path=$(find_acpi_path "$device"); then
+        return 1
+    fi
+
+    echo "Found ACPI node at $device_acpi_path." >&2
+
+    rom_method="$device_acpi_path._ROM"
+
+    # Checking if the supplied _ROM is working.
+    if ! acpi_call "$rom_method" > /dev/null ; then
+        echo "error: Failed to execute _ROM method." >&2
+        return 1
+    fi
+
+    echo "Using $rom_method method for dumping ROM." >&2
+
+    if [ $rom_length -lt 0 ]; then
+        if ! rom_length=$(find_rom_length); then
+            echo "error: Failed to find the ROM length." >&2
+            return 1
+        fi
+    fi
+
+    printf "The ROM length is 0x%x bytes. Start dumping the ROM...\n" "$rom_length" >&2
+
+    if ! read_rom 0 "$rom_length" ; then
+        echo "error: Failed to dump the ROM." >&2
+        return 1
+    fi
+
+    echo "Dumping finished." >&2
+}
+
+while [ $# -gt 0 ]; do
+    case $1 in
+        -h|--help)
+            help
+            ;;
+        -v|--verbose)
+            verbose=1
+            ;;
+        -d|--device)
+            shift
+            device=$1
+            ;;
+        -l|--length)
+            shift
+            rom_length=$(($1))
+            if [ $rom_length -le 0 ]; then
+                echo "error: ROM length must be more than 0." >&2
+            fi
+            ;;
+        *)
+            echo "error: Unknown parameter: $1" >&2
+            exit 1
+            ;;
+    esac
+    shift
+done
+
+main
