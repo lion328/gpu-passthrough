@@ -95,14 +95,6 @@ DefinitionBlock ("", "SSDT", 1, "DOTLEG", "NVIDIAFU", 1) {
             }
 
             If (Arg0 < FWLE) {
-                // Separate ROM into 32-KiB chunks
-                // This is crucial for some reason.
-                Local1 = 0x8000
-                Local2 = Arg0 % Local1
-                If (Local1 < Local2 + Local0) {
-                    Local0 = Local1 - Local2
-                }
-
                 Return (Mid (FWBI, Arg0, Local0))
             }
 
