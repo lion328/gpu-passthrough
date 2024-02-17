@@ -11,8 +11,9 @@ rom_length=-1
 # Each acpi_call can only contain 42 bytes of actual ACPI buffer data.
 max_bytes_per_call=$((42))
 
-# The ROM should be divided into 32-KiB sections.
-bytes_per_section=$((0x8000))
+# The ROM should be divided into 32-KiB sections. NVIDIA drivers read it in a 4-KiB in each call,
+# which is the maximum size allowed according to the ACPI spec.
+bytes_per_section=$((0x1000))
 
 help() {
     echo "Usage: ./dump_vbios_rom_acpi [OPTION]..." >&2
