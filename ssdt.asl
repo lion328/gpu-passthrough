@@ -102,49 +102,15 @@ DefinitionBlock ("", "SSDT", 1, "DOTLEG", "NVIDIAFU", 1) {
         }
     }
 
-    // Fake battery device
-    Scope (\_SB.PCI0) {
+    // Fake battery device at LPC bridge (1f.0)
+    External (\_SB.PCI0.SF8, DeviceObj)
+    Scope (\_SB.PCI0.SF8) {
         Device (BAT0) {
             Name (_HID, EisaId ("PNP0C0A"))
             Name (_UID, 1)
 
             Method (_STA) {
-                Return (0x1F)
-            }
-
-            Method (_BIX) {
-                Return (Package () {
-                    1,
-                    0,
-                    60000,
-                    0xFFFFFFFF,
-                    1,
-                    0xFFFFFFFF,
-                    2,
-                    1,
-                    0xFFFFFFFF,
-                    0xFFFFFFFF,
-                    0xFFFFFFFF,
-                    0xFFFFFFFF,
-                    0,
-                    0,
-                    1,
-                    1,
-                    "",
-                    "",
-                    "",
-                    "",
-                    1,
-                })
-            }
-
-            Method (_BST) {
-                Return (Package () {
-                    0,
-                    0xFFFFFFFF,
-                    60000,
-                    15000,
-                })
+                Return (0x0F)
             }
         }
     }
