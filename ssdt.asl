@@ -84,7 +84,7 @@ DefinitionBlock ("", "SSDT", 1, "DOTLEG", "NVIDIAFU", 1) {
             }
         }
 
-        Method (_ROM, 2, Serialized) {
+        Method (_ROM, 2) {
             RINT ()
 
             Local0 = Arg1
