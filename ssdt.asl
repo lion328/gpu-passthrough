@@ -9,7 +9,6 @@ DefinitionBlock ("", "SSDT", 1, "DOTLEG", "NVIDIAFU", 1) {
     External (\_SB.PCI0.S08.S00, DeviceObj)
     Scope (\_SB.PCI0.S08.S00) {
         Name (FWIT, 0) // fw_cfg initialized
-        Name (FWLE, 0) // fw_cfg length
         Name (FWBI, Buffer () { 0 }) // fw_cfg binary
 
         OperationRegion (FWIO, SystemIO, 0x510, 2) // fw_cfg I/O ports
@@ -75,11 +74,11 @@ DefinitionBlock ("", "SSDT", 1, "DOTLEG", "NVIDIAFU", 1) {
                     Return ()
                 }
 
-                FISL ("opt/com.lion328/nvidia-rom", RefOf (Local0), RefOf (FWLE))
+                FISL ("opt/com.lion328/nvidia-rom", RefOf (Local0), RefOf (Local1))
 
                 If (Local0) {
                     FSEL = Local0
-                    CopyObject (RBUF (FWLE), FWBI)
+                    CopyObject (RBUF (Local1), FWBI)
                 }
             }
         }
@@ -94,7 +93,7 @@ DefinitionBlock ("", "SSDT", 1, "DOTLEG", "NVIDIAFU", 1) {
                 Local0 = 0x1000
             }
 
-            If (Arg0 < FWLE) {
+            If (Arg0 < SizeOf (FWBI)) {
                 Return (Mid (FWBI, Arg0, Local0))
             }
 
