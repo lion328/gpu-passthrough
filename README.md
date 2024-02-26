@@ -2,6 +2,8 @@
 
 This repository contains the information about my experiments on GPU passthrough using VFIO.
 
+![Windows guest screenshot](screenshot.png)
+
 ## Host specification
 
 The host is a laptop with NVIDIA Optimus with an NVIDIA Pascal GPU.
