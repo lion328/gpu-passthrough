@@ -21,6 +21,16 @@ The host is a laptop with NVIDIA Optimus with an NVIDIA Pascal GPU.
 Diffrent systems usually needs different workarounds, or need none of them at all. The one listed
 below are workarounds that I use for my system, sorted from common to uncommon.
 
+### Disable fast boot
+
+For debugging, it would be better to disable fast boot since it will make the system retains states
+that might be inconsistent of changes you made.
+
+### Using the latest driver
+
+Some of the workarounds, such as the fake battery table and hiding KVM, might not be needed on
+newer NVIDIA drivers.
+
 ### Standard Code 43 fixes
 
 Refer to the Arch Linux wiki:
@@ -29,25 +39,7 @@ https://wiki.archlinux.org/title/PCI_passthrough_via_OVMF#Video_card_driver_virt
 ### Custom ACPI SSDT
 
 The SSDT in this repository included a fake battery and ACPI ROM workarounds. You can add it using
-QEMU `-acpitable` parameter. A libvirt XML example:
-
-```xml
-<domain xmlns:qemu="http://libvirt.org/schemas/domain/qemu/1.0">
-    ...
-    <qemu:commandline>
-        <qemu:arg value="-acpitable"/>
-        <qemu:arg value="file=/path/to/ssdt.aml"/>
-    </qemu:commandline>
-</domain>
-```
-
-#### Fake battery
-
-NVIDIA driver also check for the existence of a battery. More info on this:
-https://www.reddit.com/r/VFIO/comments/ebo2uk/nvidia_geforce_rtx_2060_mobile_success_qemu_ovmf/.
-
-The SSDT included here is a bit different. In guest, it will show up as the battery missing instead
-of having a fully-charged battery. It fixes the same problem but with a lighter code.
+QEMU `-acpitable` parameter.
 
 #### ACPI ROM
 
@@ -59,16 +51,48 @@ The SSDT included here will looking up the ROM in a QEMU fw_cfg file named
 `opt/com.lion328/nvidia-rom`. This needed to be specified in libvirt XML like this:
 
 ```xml
-<domain>
+<domain xmlns:qemu="http://libvirt.org/schemas/domain/qemu/1.0">
     ...
     <sysinfo type="fwcfg">
         <entry name="opt/com.lion328/nvidia-rom" file="/path/to/rom"/>
     </sysinfo>
+    <qemu:commandline>
+        ...
+        <qemu:arg value="-acpitable"/>
+        <qemu:arg value="file=/path/to/ssdt_loading_rom.aml"/>
+    </qemu:commandline>
 </domain>
 ```
 
 From my testing, drivers will not mind having GPU in different location than the host, they only
 need `_ROM` method to be present in the same location.
+
+#### Fake battery
+
+NVIDIA drivers might also check for the existence of a battery. More info on this:
+https://www.reddit.com/r/VFIO/comments/ebo2uk/nvidia_geforce_rtx_2060_mobile_success_qemu_ovmf/.
+
+The SSDT included here is a bit different. In guest, it will show up as the battery missing instead
+of having a fully-charged battery. This needed to be specified in libvirt XML like this:
+
+```xml
+<domain xmlns:qemu="http://libvirt.org/schemas/domain/qemu/1.0">
+    ...
+    <qemu:commandline>
+        ...
+        <qemu:arg value="-acpitable"/>
+        <qemu:arg value="file=/path/to/ssdt_fake_battery.aml"/>
+    </qemu:commandline>
+</domain>
+```
+
+**Note:** from my testing on Windows 11, If you use this workaround, when holding down keys (e.g.
+holding W key to go forward in games,) the left click will not be registered. Likely because
+Windows think the mouse is some kind of a touchpad since there is a battery, so it will disable the
+"touchpad" if the user is using the keyboard. Windows, however, didn't provide any facilities to
+configure touchpads, so there is no way (from what I can tell) to disable such behavior. Only PS/2
+and virtio kind of mouses are affected. A workaround of this is specify the mouse to use USB instead.
+Or don't use the fake battery at all.
 
 ### Not passing through the HDMI Audio
 
@@ -203,6 +227,11 @@ The fix is by adding `hotplug="off"` to the root port of the GPU. An example:
 Each OS have its own quirks. Linux guests can be more forgiving. If it did not work in Linux, then
 it is probably not working for Windows guest either. Keep in mind that there are some cases where
 it works on Windows but not on Linux, so testing both Linux and Windows if you can. 
+
+### Reset the NVRAM
+
+If the VM stuck on the POST screen, try resetting the NVRAM by deleting it. For libvirt, the file
+resides at `/var/lib/libvirt/qemu/nvram/`.
 
 ## Wishlist
 
